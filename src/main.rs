@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use bilidown::{run_download, set_cookie};
 use clap::Parser;
 
-/// Simple program to greet a person
+/// Simple program to download Bilibili videos.
 #[derive(Parser, Debug)]
 #[command(version, long_about = None)]
 struct Args {
