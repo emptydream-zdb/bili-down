@@ -55,14 +55,15 @@ cargo build --release
 
 ## 使用方法
 
+```bash
 Usage: bilidown [OPTIONS]
-
 Options:
   -u, --url <URL>    待下载视频的 URL
   -p, --path <PATH>  视频下载的保存路径 [default: ./]
   -c, --cookie       设置 Cookie
   -h, --help         Print help
   -V, --version      Print version
+```
 
 ### 基本用法
 
