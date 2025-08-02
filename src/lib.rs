@@ -1,5 +1,4 @@
 use anyhow::{Result, anyhow};
-use dirs;
 use regex::Regex;
 use reqwest::{Client, Response};
 use std::io::{self, Write};
@@ -82,18 +81,18 @@ fn get_video_name(text: &str) -> Result<String> {
     Ok(video_name)
 }
 
-fn get_video_url(text: &str) -> Result<String> {
+fn get_video_baseurl(text: &str) -> Result<String> {
     // 匹配 "video" 数组中的第一个 baseUrl
-    let video_url = regex_match(text, r#""video":\s*\[\s*\{[^}]*"baseUrl":"([^"]+)""#)?;
+    let video_baseurl = regex_match(text, r#""video":\s*\[\s*\{[^}]*"baseUrl":"([^"]+)""#)?;
 
-    Ok(video_url)
+    Ok(video_baseurl)
 }
 
-fn get_audio_url(text: &str) -> Result<String> {
+fn get_audio_baseurl(text: &str) -> Result<String> {
     // 匹配 "audio" 数组中的第一个 url
-    let audio_url = regex_match(text, r#""audio":\s*\[\s*\{[^}]*"baseUrl":"([^"]+)""#)?;
+    let audio_baseurl = regex_match(text, r#""audio":\s*\[\s*\{[^}]*"baseUrl":"([^"]+)""#)?;
 
-    Ok(audio_url)
+    Ok(audio_baseurl)
 }
 
 async fn download_file(url: &str, path: &Path, client: &Client) -> Result<()> {
@@ -130,8 +129,8 @@ async fn merge_video_audio_async(
 }
 
 async fn complete_download(
-    video_url: &str,
-    audio_url: &str,
+    video_baseurl: &str,
+    audio_baseurl: &str,
     output_path: &Path,
     client: &Client,
 ) -> Result<()> {
@@ -141,8 +140,8 @@ async fn complete_download(
     let video_temp_path = video_temp.path();
     let audio_temp_path = audio_temp.path();
 
-    download_file(video_url, video_temp_path, &client).await?;
-    download_file(audio_url, audio_temp_path, &client).await?;
+    download_file(video_baseurl, video_temp_path, client).await?;
+    download_file(audio_baseurl, audio_temp_path, client).await?;
 
     // 使用 FFmpeg 合并视频和音频
     merge_video_audio_async(video_temp_path, audio_temp_path, output_path).await
@@ -159,8 +158,18 @@ fn check_path(path: &str) -> Result<()> {
     Ok(())
 }
 
+fn complete_url(url: String) -> Result<String> {
+    if url.starts_with("https://www.bilibili.com/video/") {
+        Ok(url)
+    } else {
+        Ok(format!("https://www.bilibili.com/video/{}", &url))
+    }
+}
+
 pub async fn run_download(url: String, path: String) -> Result<()> {
-    println!("开始下载视频: {}", url);
+    let url = complete_url(url)?;
+
+    println!("开始下载视频: {}", &url);
     check_path(&path)?;
     // 创建 HTTP 客户端
     let client = reqwest::Client::new();
@@ -173,16 +182,16 @@ pub async fn run_download(url: String, path: String) -> Result<()> {
     let result = response.text().await?;
 
     let video_name = get_video_name(&result)?;
-    println!("视频名称: {}", video_name);
-    let out_path = Path::new(&path).join(format!("{}.mp4", video_name));
+    println!("视频名称: {}", &video_name);
+    let out_path = Path::new(&path).join(format!("{}.mp4", &video_name));
     if out_path.exists() {
         return Err(anyhow!("文件已存在: {}", out_path.display()));
     }
 
-    let video_url = get_video_url(&result)?;
-    let audio_url = get_audio_url(&result)?;
+    let video_baseurl = get_video_baseurl(&result)?;
+    let audio_baseurl = get_audio_baseurl(&result)?;
 
-    complete_download(&video_url, &audio_url, &out_path, &client).await?;
+    complete_download(&video_baseurl, &audio_baseurl, &out_path, &client).await?;
     println!("视频下载完成: {}", out_path.display());
 
     Ok(())
