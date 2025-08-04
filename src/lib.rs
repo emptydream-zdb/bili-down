@@ -2,37 +2,41 @@ use anyhow::{Result, anyhow};
 use regex::Regex;
 use reqwest::{Client, Response};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::{fs, path::Path};
 use tempfile::NamedTempFile;
 use tokio::process::Command;
 
-pub fn set_cookie() -> Result<()> {
-    let config_path = if let Some(home) = dirs::home_dir() {
-        home.join(".config").join("bilidown").join("cookie.env")
+fn get_config_path() -> Result<PathBuf> {
+    if let Some(home) = dirs::home_dir() {
+        Ok(home.join(".config").join("bilidown").join("cookie.env"))
     } else {
-        return Err(anyhow!("无法获取用户家目录"));
-    };
-    fs::create_dir_all(config_path.parent().unwrap())?;
+        Err(anyhow!("无法获取用户家目录"))
+    }
+}
+
+pub fn set_cookie() -> Result<()> {
+    let config_path = get_config_path()?;
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent)?;
+    } else {
+        return Err(anyhow!("无法获取配置文件的父目录"));
+    }
     print!("请输入 BiliBili Cookie 信息: ");
     io::stdout().flush()?;
     let mut cookie = String::new();
     io::stdin().read_line(&mut cookie)?;
-    fs::write(&config_path, cookie.trim()).unwrap();
+    fs::write(&config_path, cookie.trim())?;
     println!("Cookie 信息已保存到: {}", config_path.display());
     Ok(())
 }
 
 fn get_cookie() -> Result<String> {
-    let config_path = if let Some(home) = dirs::home_dir() {
-        home.join(".config").join("bilidown").join("cookie.env")
-    } else {
-        return Err(anyhow!("无法获取用户家目录"));
-    };
-
+    let config_path = get_config_path()?;
     match fs::read_to_string(&config_path) {
         Ok(cookies) => Ok(cookies.trim().to_string()),
-        Err(_err) => {
-            println!("Cookie 文件不存在或无法读取，不使用 Cookie。");
+        Err(err) => {
+            println!("Cookie 文件不存在或无法读取，不使用 Cookie ,错误：{err}");
             Ok(String::from(""))
         }
     }
@@ -62,16 +66,13 @@ async fn get_bili(client: &Client, url: &str) -> Result<Response> {
 /// regex: 正则表达式字串，必须是原始字符串
 fn regex_match(text: &str, regex: &str) -> Result<String> {
     let re = Regex::new(regex)?;
-    if let Some(captures) = re.captures(text) {
-        // dbg!(captures.get(0).unwrap().as_str());
-        if let Some(url) = captures.get(1) {
-            return Ok(url.as_str().to_string());
-        }
-    }
-    Err(anyhow!("未匹配成功！"))
+    let captures = re
+        .captures(text)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+        .ok_or_else(|| anyhow!("未匹配成功!"))?;
+    Ok(captures)
 }
-
-// <title data-vue-meta="true">不如 元气涂涂_哔哩哔哩_bilibili</title>
 
 fn get_video_name(text: &str) -> Result<String> {
     let video_name = regex_match(
@@ -158,36 +159,44 @@ fn check_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-fn complete_url(url: String) -> Result<String> {
+fn complete_url(url: String) -> String {
     if url.starts_with("https://www.bilibili.com/video/") {
-        Ok(url)
+        url
     } else {
-        Ok(format!("https://www.bilibili.com/video/{}", &url))
+        format!("https://www.bilibili.com/video/{url}")
+    }
+}
+
+fn generate_unique_filename(base_path: &Path, video_name: &str) -> PathBuf {
+    let mut cnt = 0;
+    loop {
+        let filename = if cnt == 0 {
+            format!("{video_name}.mp4")
+        } else {
+            format!("{video_name}-{cnt}.mp4")
+        };
+        let path = base_path.join(filename);
+        if !path.exists() {
+            return path;
+        }
+        cnt += 1;
     }
 }
 
 pub async fn run_download(url: String, path: String) -> Result<()> {
-    let url = complete_url(url)?;
+    let url = complete_url(url);
 
     println!("开始下载视频: {}", &url);
     check_path(&path)?;
-    // 创建 HTTP 客户端
     let client = reqwest::Client::new();
 
     let response = get_bili(&client, &url).await?;
-    if !response.status().is_success() {
-        return Err(anyhow!("请求失败，状态码: {}", response.status()));
-    }
-
     let result = response.text().await?;
 
     let video_name = get_video_name(&result)?;
     println!("视频名称: {}", &video_name);
-    let out_path = Path::new(&path).join(format!("{}.mp4", &video_name));
-    if out_path.exists() {
-        return Err(anyhow!("文件已存在: {}", out_path.display()));
-    }
 
+    let out_path = generate_unique_filename(&PathBuf::from(&path), &video_name);
     let video_baseurl = get_video_baseurl(&result)?;
     let audio_baseurl = get_audio_baseurl(&result)?;
 
