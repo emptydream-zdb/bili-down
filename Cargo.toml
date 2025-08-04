@@ -14,3 +14,6 @@ tokio-util = "0.7"  # 流处理工具
 futures = "0.3"     # 异步工具
 tempfile = "3.20.0"
 dirs = "6.0.0"
+
+indicatif = "0.18"
+futures-util = "0.3" # 异步工具

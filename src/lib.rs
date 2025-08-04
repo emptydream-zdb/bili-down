@@ -1,4 +1,6 @@
 use anyhow::{Result, anyhow};
+use futures_util::StreamExt;
+use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use reqwest::{Client, Response};
 use std::io::{self, Write};
@@ -96,10 +98,29 @@ fn get_audio_baseurl(text: &str) -> Result<String> {
     Ok(audio_baseurl)
 }
 
-async fn download_file(url: &str, path: &Path, client: &Client) -> Result<()> {
+async fn download_file(url: &str, path: &Path, client: &Client, pb: &ProgressBar) -> Result<()> {
     let response = get_bili(client, url).await?;
-    let bytes = response.bytes().await?;
-    fs::write(path, &bytes)?;
+    let total_size = response.content_length().unwrap_or(0);
+
+    pb.set_length(total_size);
+    pb.set_style(ProgressStyle::default_bar()
+        .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .unwrap()
+        .progress_chars("#>-"));
+
+    let mut stream = response.bytes_stream();
+    let mut downloaded = 0u64;
+    let mut file_content = Vec::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        file_content.extend_from_slice(&chunk);
+        downloaded += chunk.len() as u64;
+        pb.set_position(downloaded);
+    }
+
+    fs::write(path, &file_content)?;
+    pb.finish_with_message("下载完成");
     Ok(())
 }
 
@@ -141,11 +162,28 @@ async fn complete_download(
     let video_temp_path = video_temp.path();
     let audio_temp_path = audio_temp.path();
 
-    download_file(video_baseurl, video_temp_path, client).await?;
-    download_file(audio_baseurl, audio_temp_path, client).await?;
+    println!("下载视频文件...");
+    let video_pb = ProgressBar::new(0);
+    download_file(video_baseurl, video_temp_path, client, &video_pb).await?;
 
-    // 使用 FFmpeg 合并视频和音频
-    merge_video_audio_async(video_temp_path, audio_temp_path, output_path).await
+    println!("下载音频文件...");
+    let audio_pb = ProgressBar::new(0);
+    download_file(audio_baseurl, audio_temp_path, client, &audio_pb).await?;
+
+    println!("合并视频和音频...");
+    let merge_pb = ProgressBar::new_spinner();
+    merge_pb.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.green} {msg}")
+            .unwrap(),
+    );
+    merge_pb.set_message("正在合并文件...");
+    merge_pb.enable_steady_tick(std::time::Duration::from_millis(100));
+
+    let result = merge_video_audio_async(video_temp_path, audio_temp_path, output_path).await;
+    merge_pb.finish_with_message("合并完成");
+
+    result
 }
 
 fn check_path(path: &str) -> Result<()> {
