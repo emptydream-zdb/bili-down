@@ -77,10 +77,7 @@ fn regex_match(text: &str, regex: &str) -> Result<String> {
 }
 
 fn get_video_name(text: &str) -> Result<String> {
-    let video_name = regex_match(
-        text,
-        r#"<title data-vue-meta="true">([^<]+)_哔哩哔哩_bilibili</title>"#,
-    )?;
+    let video_name = regex_match(text, r#"<title.*?>([^<]+)_哔哩哔哩_bilibili</title>"#)?;
     Ok(video_name)
 }
 
